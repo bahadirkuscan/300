@@ -19,6 +19,8 @@ class Grid:
                 unit_object = WaterUnit(x,y, self)
             self.units[x][y] = unit_object
             unit_object.grid = self
+            return True
+        return False
 
     def has_airunit(self):
         for row in self.units:

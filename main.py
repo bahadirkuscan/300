@@ -11,9 +11,6 @@ n_ranks = comm.Get_size()
 
 # Get the rank (unique ID) of the current process in the communicator
 rank = comm.Get_rank()
-wave_count = 0
-round_count = 0
-
 
 # Gets absolute coordinates of a cell and returns the rank of its processor and relative coordinates
 def get_sub_grid_coordinates(x, y, sub_grid_size):
@@ -21,9 +18,15 @@ def get_sub_grid_coordinates(x, y, sub_grid_size):
     y_relative = y % sub_grid_size
     row = x // sub_grid_size
     col = y // sub_grid_size
-    rank = row * math.sqrt(n_ranks - 1) // 1 + col + 1
+    rank = int(row * math.sqrt(n_ranks - 1)) + col + 1
     return rank, x_relative, y_relative
 
+def get_abs_coordinates(rel_x, rel_y, sub_grid_size, source_rank):
+    row = (source_rank-1) // math.sqrt(n_ranks - 1)
+    col = (source_rank-1) % math.sqrt(n_ranks - 1)
+    x_abs = row * sub_grid_size + rel_x
+    y_abs = col * sub_grid_size + rel_y
+    return x_abs, y_abs
 
 # gets relative rank of a processor given relative addresses
 def get_target_rank_offset(new_x, new_y):
@@ -42,7 +45,7 @@ def get_target_rank_offset(new_x, new_y):
 
 # Parses a wave input
 def parse_units(lines):
-    units = [[] * n_ranks]
+    units = [[] for _ in range(n_ranks)]
     for i in range(4):
         line = lines[i]
         line = line.split(":")
@@ -50,6 +53,7 @@ def parse_units(lines):
         for j in range(unit_count):
             x, y = map(int, positions[j].split())
             target_rank, x_relative, y_relative = get_sub_grid_coordinates(x, y, sub_grid_size)
+            print(units)
             units[target_rank].append((line[0], x_relative, y_relative))
     return units
 
@@ -104,17 +108,18 @@ def air_unit_movement(big_grid):
 
 
 if rank == 0:
-    # Initialize
-    file = open('input.txt', 'r')
+# Initialize
+    file = open("input1.txt", 'r')
     line = file.readline()
     # The size of main grid = N
     main_grid_size, wave_count, unit_count, round_count = map(int, line.split())
     # Calculate size of each grid
-    sub_grid_size = main_grid_size // math.sqrt(n_ranks - 1)
+    sub_grid_size = int(main_grid_size // math.sqrt(n_ranks - 1))
     Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
+
     for rank in range(1, n_ranks):
         # Send the sub-grid size to workers and wait for them to initialize sub-grids
-        comm.send(sub_grid_size, rank)
+        comm.send((main_grid_size,sub_grid_size,wave_count,round_count), rank)
     for rank in range(1, n_ranks):
         comm.recv(source=rank)
 
@@ -150,6 +155,7 @@ if rank == 0:
 
             for i in range(1, n_ranks):
                 comm.send("finish", i)
+
 
             # After finishing calculating phase of movement phase now we need to apply those movements
             # First every worker will process its own queue
@@ -208,21 +214,51 @@ if rank == 0:
                 comm.send("phase finished", i)
 
 
+        # POST-WAVE UPDATES
+        # Start with even-even coords and end with odd-odd coords
+        for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+            signal_count = 0
+            for row in range(a, Classes.Grid.grid_index_limit, 2):
+                for col in range(b, Classes.Grid.grid_index_limit, 2):
+                    comm.send("proceed", get_rank(row, col))
+                    signal_count += 1
+            for _ in range(signal_count):
+                comm.recv()
+        for i in range(1, n_ranks):
+            comm.send("next wave", i)
 
+        print_array = [["." * main_grid_size] * main_grid_size]
+        for i in range(1, n_ranks):
+            status = MPI.Status()
+            sub_grid = comm.recv(status=status)
+            source_rank = status.Get_source()
+            for row in sub_grid.units:
+                for unit in row:
+                    if unit == ".":
+                        continue
+                    x, y = get_abs_coordinates(unit.x,unit.y,sub_grid_size,source_rank)
+                    if isinstance(unit, Classes.AirUnit):
+                        print_array[x][y] = "A"
+                    elif isinstance(unit, Classes.WaterUnit):
+                        print_array[x][y] = "W"
+                    elif isinstance(unit, Classes.FireUnit):
+                        print_array[x][y] = "F"
+                    elif isinstance(unit, Classes.EarthUnit):
+                        print_array[x][y] = "E"
 
+        # Print the array with one space between elements
+        for row in print_array:
+            for element in row:
+                print(element, end=" ")
+            print()
 
-
-
-
-
-
-
-
+    file.close()
 
 
 else:
     # Wait for the manager to calculate sub-grid size
-    sub_grid_size = comm.recv(source=0)
+    main_grid_size, sub_grid_size, wave_count, round_count = comm.recv(source=0)
+    Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
     row, col = rank // Classes.Grid.grid_index_limit, rank % Classes.Grid.grid_index_limit
     grid = Classes.Grid(sub_grid_size, row, col)
     comm.send(grid, dest=0)
@@ -230,7 +266,7 @@ else:
         units = comm.recv(source=0)
         for unit in units:
             grid.create_unit(unit)
-        comm.send(dest=0)
+        comm.send("", dest=0)
 
         for round_number in range(round_count):
             movement_queue = []
@@ -261,18 +297,16 @@ else:
                                 # Now put the new grid inside big grid
                                 for i in range(sub_grid_size):
                                     for j in range(sub_grid_size):
-                                        big_grid[(x + 1) * sub_grid_size + i][(y + 1) * sub_grid_size + j] = \
-                                            new_grid.units[i][j]
+                                        big_grid[(x + 1) * sub_grid_size + i][(y + 1) * sub_grid_size + j] = new_grid.units[i][j]
 
                         movement_queue = air_unit_movement(big_grid)
                         comm.send("completed", dest=0)
 
                 elif signal == "send data":
-                    comm.send(grid.units, dest=status.Get_source())
+                    comm.send(grid, dest=status.Get_source())
 
                 elif signal == "finish":
                     break
-
             # Applying movements of movement phase
             # First of all handle your own queue and send necessary signals to other workers
             for x, y, new_x, new_y in movement_queue:
@@ -427,3 +461,42 @@ else:
                     if isinstance(unit, Classes.FireUnit):
                         unit.inferno_applied = False
 
+        # Apply post-wave updates
+        while True:
+            status = MPI.Status()
+            signal = comm.recv(status=status)
+            # If proceed start post-wave updates and handle flood
+            if signal == "proceed":
+                for row in grid.units:
+                    for unit in row:
+                        # Processes inferno damage reset
+                        if isinstance(unit, Classes.FireUnit):
+                            unit.attack_power = 4
+
+                        # Processes flood
+                        elif isinstance(unit, Classes.WaterUnit):
+                            # Low x has priority
+                            for [i, j] in [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]:
+                                rel_x, rel_y = unit.x + i, unit.y + j
+                                rank_offset = get_target_rank_offset(rel_x, rel_y)
+                                if rank_offset is None:
+                                    continue
+                                if rank_offset == 0:
+                                    add_success = grid.create_unit(("W", rel_x, rel_y))
+                                    if add_success: break
+                                else:
+                                    comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size), dest=rank + rank_offset)
+                                    add_success = comm.recv(source=rank+rank_offset)
+                                    if add_success: break
+                comm.send("updates finished", dest=0)
+
+            elif signal == "next wave":
+                break
+
+            else:
+                # Add the unit neighbour requested
+                x, y = signal
+                add_success = grid.create_unit(("W", x, y))
+                comm.send(add_success, status.Get_source())
+
+        comm.send(grid, dest=0)

@@ -36,7 +36,7 @@ class Grid:
             unit.x, unit.y = x, y
             unit.grid = self
         elif isinstance(occupier,AirUnit):
-            occupier.health = min(occupier.health + unit.health, 14)
+            occupier.health = min(occupier.health + unit.health, AirUnit.max_health)
             occupier.attack_power += unit.attack_power
 
     def remove_unit(self, unit):
@@ -63,6 +63,9 @@ class AirUnit:
         if self.health <= 0:
             self.health = 0
 
+    def is_alive(self):
+        return self.health > 0
+
     def target_coordinates(self):
         result_queue =[]
         for [i, j] in AirUnit.attack_pattern:
@@ -86,6 +89,7 @@ class FireUnit:
         self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 12
 
     def take_damage(self, damage):
+        print(self.x, self.y,damage, flush=True)
         self.health -= damage
         if self.health <= 0:
             self.health = 0  # Ensure health does not go below zero
@@ -136,8 +140,6 @@ class EarthUnit:
         return result_queue
 class WaterUnit:
     attack_pattern = [[-1, -1], [-1, 1], [1, -1], [1, 1]]
-
-
     def _init_(self, x, y, grid):
         self.skip = True
         self.grid = grid
@@ -149,9 +151,10 @@ class WaterUnit:
         self.healing_rate = 2  # Health restored when skipping an attack
 
     def heal(self):
-        self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 10
+        self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 14
 
     def take_damage(self, damage):
+
         self.health -= damage
         if self.health <= 0:
             self.health = 0  # Ensure health does not go below zero

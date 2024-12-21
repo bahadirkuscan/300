@@ -21,8 +21,8 @@ def get_sub_grid_coordinates(x, y, sub_grid_size):
     return rank, x_relative, y_relative
 
 def get_abs_coordinates(rel_x, rel_y, sub_grid_size, source_rank):
-    row = (source_rank-1) // math.sqrt(n_ranks - 1)
-    col = (source_rank-1) % math.sqrt(n_ranks - 1)
+    row = int((source_rank-1) // math.sqrt(n_ranks - 1))
+    col = int((source_rank-1) % math.sqrt(n_ranks - 1))
     x_abs = row * sub_grid_size + rel_x
     y_abs = col * sub_grid_size + rel_y
     return x_abs, y_abs
@@ -31,15 +31,15 @@ def get_abs_coordinates(rel_x, rel_y, sub_grid_size, source_rank):
 def get_target_rank_offset(new_x, new_y):
     row_diff = new_x // sub_grid_size
     col_diff = new_y // sub_grid_size
-    if col_diff == -1 and rank % math.sqrt(n_ranks - 1) == 1:
+    if col_diff == -1 and int(rank % math.sqrt(n_ranks - 1)) == 1:
         return None
-    if col_diff == 1 and rank % math.sqrt(n_ranks - 1) == 0:
+    if col_diff == 1 and int(rank % math.sqrt(n_ranks - 1)) == 0:
         return None
     if row_diff == -1 and rank <= math.sqrt(n_ranks - 1):
         return None
     if row_diff == 1 and rank > n_ranks - math.sqrt(n_ranks):
         return None
-    return row_diff * math.sqrt(n_ranks - 1) + col_diff
+    return int(row_diff * math.sqrt(n_ranks - 1) + col_diff)
 
 
 # Parses a wave input
@@ -118,6 +118,7 @@ if rank == 0:
     line = file.readline()
     # The size of main grid = N
     main_grid_size, wave_count, unit_count, round_count = map(int, line.split())
+
     # Calculate size of each grid
     sub_grid_size = int(main_grid_size // math.sqrt(n_ranks - 1))
     Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
@@ -128,6 +129,7 @@ if rank == 0:
     for i in range(1, n_ranks):
         comm.recv(source=i)
     for wave_number in range(wave_count):
+        print("WAVE IS STARTING:", wave_number, flush=True)
         # Get the coordinates of each unit and put them in an array
         line = file.readline()
         lines = []
@@ -145,7 +147,6 @@ if rank == 0:
             comm.recv(source=rank)
 
         for round_number in range(round_count):
-
             # MOVEMENT PHASE
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
@@ -153,7 +154,6 @@ if rank == 0:
                 for row in range(a, Classes.Grid.grid_index_limit, 2):
                     for col in range(b, Classes.Grid.grid_index_limit, 2):
                         comm.send("proceed", get_rank(row, col))
-                        print("Proceed sent to ", get_rank(row,col), flush=True)
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -189,7 +189,10 @@ if rank == 0:
                     comm.recv()
 
             for i in range(1, n_ranks):
-                comm.send("decisions finished", i)
+                comm.send("decisions finished",dest= i)
+
+            for i in range(1, n_ranks):
+                comm.recv(source= i)
 
             # RESOLUTION PHASE
             # Start with even-even coords and end with odd-odd coords
@@ -215,9 +218,35 @@ if rank == 0:
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
+
             for i in range(1, n_ranks):
                 comm.send("phase finished", i)
 
+            print_array = [["." for _ in range(main_grid_size)] for _ in range(main_grid_size)]
+            for i in range(1, n_ranks):
+                status = MPI.Status()
+                sub_grid = comm.recv(status=status)
+                source_rank = status.Get_source()
+                for row in sub_grid.units:
+                    for unit in row:
+                        if unit == ".":
+                            continue
+                        x, y = get_abs_coordinates(unit.x, unit.y, sub_grid_size, source_rank)
+                        if isinstance(unit, Classes.AirUnit):
+                            print_array[x][y] = "A"
+                        elif isinstance(unit, Classes.WaterUnit):
+                            print_array[x][y] = "W"
+                        elif isinstance(unit, Classes.FireUnit):
+                            print_array[x][y] = "F"
+                        elif isinstance(unit, Classes.EarthUnit):
+                            print_array[x][y] = "E"
+
+            print("TABLE AFTER ROUND: ",round_number)
+            # Print the array with one space between elements
+            for row in print_array:
+                for element in row:
+                    print(element, end=" ")
+                print(flush=True)
 
         # POST-WAVE UPDATES
         # Start with even-even coords and end with odd-odd coords
@@ -232,30 +261,7 @@ if rank == 0:
         for i in range(1, n_ranks):
             comm.send("next wave", i)
 
-        print_array = [["." * main_grid_size] * main_grid_size]
-        for i in range(1, n_ranks):
-            status = MPI.Status()
-            sub_grid = comm.recv(status=status)
-            source_rank = status.Get_source()
-            for row in sub_grid.units:
-                for unit in row:
-                    if unit == ".":
-                        continue
-                    x, y = get_abs_coordinates(unit.x,unit.y,sub_grid_size,source_rank)
-                    if isinstance(unit, Classes.AirUnit):
-                        print_array[x][y] = "A"
-                    elif isinstance(unit, Classes.WaterUnit):
-                        print_array[x][y] = "W"
-                    elif isinstance(unit, Classes.FireUnit):
-                        print_array[x][y] = "F"
-                    elif isinstance(unit, Classes.EarthUnit):
-                        print_array[x][y] = "E"
 
-        # Print the array with one space between elements
-        for row in print_array:
-            for element in row:
-                print(element, end=" ")
-            print(flush=True)
     file.close()
 
 
@@ -310,8 +316,7 @@ else:
 
                 elif signal == "finish":
                     break
-            print("Movement Queue for rank:", rank)
-            print(movement_queue,flush=True)
+
 
             # Applying movements of movement phase
             # First, handle your own queue and send necessary signals to other workers
@@ -351,8 +356,8 @@ else:
                 status = MPI.Status()
                 signal = comm.recv(status=status)
                 if signal == "proceed":
-                    for row in grid.units:
-                        for unit in row:
+                    for r in grid.units:
+                        for unit in r:
                             if unit == ".":
                                 continue
                             # Those with low health will skip
@@ -410,10 +415,12 @@ else:
                     # Handle data request from another process
                     (x, y) = signal
                     comm.send(type(grid.units[x][y]), status.Get_source())
-            print(rank, attackers, "ATTACK", flush = True)
+            print(attackers,rank,flush=True)
 
+
+
+            comm.send("In Resolution Phase", dest=0)
             # RESOLUTION PHASE
-
             # First deal the damages without killing anyone
             while True:
                 status = MPI.Status()
@@ -428,24 +435,53 @@ else:
                             if rank_offset is None:
                                 continue
                             # If target coordinates in our grid check whether valid target exists or not
-                            if rank_offset == 0 and grid.units[rel_x][rel_y] != "." and type(attacker) != type(
-                                    grid.units[rel_x][rel_y]):
+                            if rank_offset == 0 and grid.units[rel_x][rel_y] != "." and type(attacker) != type(grid.units[rel_x][rel_y]):
                                 grid.units[rel_x][rel_y].take_damage(attacker.attack_power)
+                            elif rank_offset == 0 and grid.units[rel_x][rel_y] == "." and isinstance(attacker,Classes.AirUnit):
+                                # Range can't exceed 2
+                                if dir_x == 2 or dir_y == 2 or dir_x == -2 or dir_y == -2:
+                                    continue
+                                else:
+                                    # Add the next cell into the queue
+                                    relative_coordinates.append([rel_x + dir_x, rel_y + dir_y, 2*dir_x,2*dir_y])
+
+
                             # If the target is not in our grid send a message to target processor
                             elif rank_offset != 0:
-                                comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size, attacker.attack_power,
-                                           type(attacker)), dest=rank + rank_offset)
+                                print("FROM RANK", rank, "TO RANK", rank + rank_offset, (rel_x % sub_grid_size, rel_y % sub_grid_size, attacker.attack_power,type(attacker),dir_x,dir_y),flush=True)
+                                comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size, attacker.attack_power,type(attacker),dir_x,dir_y), dest=rank + rank_offset)
                             else:
                                 continue
                     comm.send("finished", dest=0)
                 elif signal == "phase finished":
                     break
                 else:
-                    (x, y, damage, attacker_type) = signal
-                    if attacker_type == type(grid.units[x][y]) or grid.units[x][y] == ".":
+                    (x, y, damage, attacker_type,dir_x,dir_y) = signal
+                    # If attacker is an air unit and target is neutral try next cell
+                    if attacker_type == Classes.AirUnit and grid.units[x][y] == ".":
+                        # Make sure range does not exceed 2
+                        if not (dir_x == 2 or dir_y == 2 or dir_x == -2 or dir_y == -2):
+                            rel_x, rel_y = x + dir_x, y + dir_y
+                            dir_x *= 2
+                            dir_y *= 2
+                            rank_offset = get_target_rank_offset(rel_x,rel_y)
+                            if rank_offset is None:
+                                continue
+                            # Next cell is in this grid, deal the damage
+                            elif rank_offset == 0:
+                                if not (grid.units[rel_x][rel_y] == "." or isinstance(grid.units[rel_x][rel_y],Classes.AirUnit)):
+                                    grid.units[rel_x][rel_y].take_damage(damage)
+                            # If the next cell is not in this grid send a new signal
+                            else:
+                                comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size, damage, attacker_type, dir_x, dir_y), dest=rank + rank_offset)
+
+
+                    elif attacker_type == type(grid.units[x][y]) or grid.units[x][y] == ".":
                         continue
                     else:
                         grid.units[x][y].take_damage(damage)
+
+
 
             # HEALING PHASE
             # Bury the dead ones, heal the alive skippers
@@ -454,8 +490,8 @@ else:
                 signal = comm.recv(status=status)
                 # If proceed start burying dead ones
                 if signal == "proceed":
-                    for row in grid.units:
-                        for unit in row:
+                    for r in grid.units:
+                        for unit in r:
                             # If no dead unit continue
                             if unit == ".":
                                 continue
@@ -476,7 +512,7 @@ else:
                                     else:
                                         comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size), dest=rank + rank_offset)
                             grid.remove_unit(unit)
-
+                    comm.send("finished", dest=0)
                 elif signal == "phase finished":
                     break
                 else:
@@ -485,22 +521,25 @@ else:
                         grid.units[x][y].inferno()
 
             # Reset round-temporary information
-            for row in grid.units:
-                for unit in row:
+            for r in grid.units:
+                for unit in r:
                     if unit == ".":
                         continue
                     unit.skip = True
                     if isinstance(unit, Classes.FireUnit):
                         unit.inferno_applied = False
+            comm.send(grid, dest=0)
 
+
+        flood_queue = []
         # Apply post-wave updates
         while True:
             status = MPI.Status()
             signal = comm.recv(status=status)
             # If proceed start post-wave updates and handle flood
             if signal == "proceed":
-                for row in grid.units:
-                    for unit in row:
+                for r in grid.units:
+                    for unit in r:
                         # Processes inferno damage reset
                         if isinstance(unit, Classes.FireUnit):
                             unit.attack_power = 4
@@ -514,8 +553,9 @@ else:
                                 if rank_offset is None:
                                     continue
                                 if rank_offset == 0:
-                                    add_success = grid.create_unit(("W", rel_x, rel_y))
-                                    if add_success: break
+                                    if grid.units[rel_x][rel_y] == ".":
+                                        flood_queue.append([rel_x, rel_y])
+                                        break
                                 else:
                                     comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size), dest=rank + rank_offset)
                                     add_success = comm.recv(source=rank+rank_offset)
@@ -527,8 +567,14 @@ else:
 
             else:
                 # Add the unit neighbour requested
-                x, y = signal
-                add_success = grid.create_unit(("W", x, y))
+                rel_x, rel_y = signal
+                add_success = False
+                if grid.units[rel_x][rel_y] == ".":
+                    flood_queue.append([rel_x, rel_y])
+                    add_success = True
                 comm.send(add_success, status.Get_source())
 
-        comm.send(grid, dest=0)
+
+        # Apply the changes in flood_queue
+        for rel_x, rel_y in flood_queue:
+            grid.create_unit(("W", rel_x, rel_y))

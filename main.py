@@ -11,7 +11,6 @@ n_ranks = comm.Get_size()
 
 # Get the rank (unique ID) of the current process in the communicator
 rank = comm.Get_rank()
-
 # Gets absolute coordinates of a cell and returns the rank of its processor and relative coordinates
 def get_sub_grid_coordinates(x, y, sub_grid_size):
     x_relative = x % sub_grid_size
@@ -53,7 +52,6 @@ def parse_units(lines):
         for j in range(unit_count):
             x, y = map(int, positions[j].split())
             target_rank, x_relative, y_relative = get_sub_grid_coordinates(x, y, sub_grid_size)
-            print(units)
             units[target_rank].append((line[0], x_relative, y_relative))
     return units
 
@@ -70,7 +68,7 @@ def get_targets_airunit(big_grid, row, col):
         # There is nothing to shoot outside of grid + we can't shoot our allies
         if big_grid[row + x][col + y] == "X" or isinstance(big_grid[row + x][col + y], Classes.AirUnit):
             continue
-        # If the cell is neutral look at the cell after it, it should not be neutral, an ally or outside of the main grid
+        # If the cell is neutral, look at the next cell.  it should not be neutral, an ally or outside of the main grid
         elif big_grid[row + x][col + y] == ".":
             if big_grid[row + 2 * x][col + 2 * y] != "." and \
                     not isinstance(big_grid[row + 2 * x][col + 2 * y], Classes.AirUnit) and \
@@ -99,6 +97,7 @@ def air_unit_movement(big_grid):
                     if big_grid[row_count + x][col_count + y] == "." or isinstance(
                             big_grid[row_count + x][col_count + y], Classes.AirUnit):
                         target_number = get_targets_airunit(big_grid, row_count + x, col_count + y)
+
                         if target_number > max_targets:
                             max_targets = target_number
                             # New x and new y are the coordinates in big_grid
@@ -107,8 +106,14 @@ def air_unit_movement(big_grid):
     return result_array
 
 
+
+
+
+
+
+
 if rank == 0:
-# Initialize
+    # Initialize
     file = open("input1.txt", 'r')
     line = file.readline()
     # The size of main grid = N
@@ -117,12 +122,11 @@ if rank == 0:
     sub_grid_size = int(main_grid_size // math.sqrt(n_ranks - 1))
     Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
 
-    for rank in range(1, n_ranks):
+    for i in range(1, n_ranks):
         # Send the sub-grid size to workers and wait for them to initialize sub-grids
-        comm.send((main_grid_size,sub_grid_size,wave_count,round_count), rank)
-    for rank in range(1, n_ranks):
-        comm.recv(source=rank)
-
+        comm.send((main_grid_size,sub_grid_size,wave_count,round_count), i)
+    for i in range(1, n_ranks):
+        comm.recv(source=i)
     for wave_number in range(wave_count):
         # Get the coordinates of each unit and put them in an array
         line = file.readline()
@@ -149,6 +153,7 @@ if rank == 0:
                 for row in range(a, Classes.Grid.grid_index_limit, 2):
                     for col in range(b, Classes.Grid.grid_index_limit, 2):
                         comm.send("proceed", get_rank(row, col))
+                        print("Proceed sent to ", get_rank(row,col), flush=True)
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -250,8 +255,7 @@ if rank == 0:
         for row in print_array:
             for element in row:
                 print(element, end=" ")
-            print()
-
+            print(flush=True)
     file.close()
 
 
@@ -259,7 +263,7 @@ else:
     # Wait for the manager to calculate sub-grid size
     main_grid_size, sub_grid_size, wave_count, round_count = comm.recv(source=0)
     Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
-    row, col = rank // Classes.Grid.grid_index_limit, rank % Classes.Grid.grid_index_limit
+    row, col = (rank-1) // Classes.Grid.grid_index_limit, (rank+1) % Classes.Grid.grid_index_limit
     grid = Classes.Grid(sub_grid_size, row, col)
     comm.send(grid, dest=0)
     for wave_number in range(wave_count):
@@ -282,14 +286,13 @@ else:
                     else:
                         # If we do then get your neighbours' data to build a bigger grid
                         big_grid = [["X" for _ in range(3 * sub_grid_size)] for _ in range(3 * sub_grid_size)]
-
                         # First put your own grid inside it
                         for i in range(sub_grid_size):
                             for j in range(sub_grid_size):
                                 big_grid[sub_grid_size + i][sub_grid_size + j] = grid.units[i][j]
 
                         # Then go to neighbours and put their data inside of it
-                        for [x, y] in [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]:
+                        for x, y in [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]:
                             # Invalid cells will remain as "X"
                             if 0 <= row + x < Classes.Grid.grid_index_limit and 0 <= col + y < Classes.Grid.grid_index_limit:
                                 comm.send("send data", dest=get_rank(row + x, col + y))
@@ -307,16 +310,20 @@ else:
 
                 elif signal == "finish":
                     break
+            print("Movement Queue for rank:", rank)
+            print(movement_queue,flush=True)
+
             # Applying movements of movement phase
-            # First of all handle your own queue and send necessary signals to other workers
+            # First, handle your own queue and send necessary signals to other workers
             for x, y, new_x, new_y in movement_queue:
                 target_rank = rank + get_target_rank_offset(new_x, new_y)
                 if target_rank == rank:
                     grid.add_unit(grid.remove_unit(grid.units[x][y]), new_x, new_y)
                 else:
-                    comm.send((grid.remove_unit(grid.units[x][y]), new_x % sub_grid_size, new_y % sub_grid_size),
-                              dest=target_rank)
+                    comm.send((grid.remove_unit(grid.units[x][y]), new_x % sub_grid_size, new_y % sub_grid_size), dest=target_rank)
             comm.send("finished queue", dest=0)
+
+
 
             # Now handle signals came from other processors
             while True:
@@ -331,6 +338,11 @@ else:
             # Wait for every other processor is done with current phase
             comm.recv(source=0)  # wait for "phase finished"
 
+
+
+
+
+
             # ATTACK PHASE
 
             # First we need to fetch the attackers
@@ -343,27 +355,46 @@ else:
                         for unit in row:
                             if unit == ".":
                                 continue
+                            # Those with low health will skip
                             elif unit.health < unit.max_health // 2:
                                 unit.skip = True
+                                continue
                             else:
                                 relative_coordinates = unit.target_coordinates()
-                                for [rel_x, rel_y] in relative_coordinates:
+                                for [rel_x, rel_y,dir_x,dir_y] in relative_coordinates:
                                     # Get the rank offset for relative coordinates
                                     rank_offset = get_target_rank_offset(rel_x, rel_y)
-                                    # If target coordinates in our grid check whether valid target exists or not
                                     if rank_offset is None:
                                         continue
-                                    if rank_offset == 0 and grid.units[rel_x][rel_y] != "." and type(unit) != type(
-                                            grid.units[rel_x][rel_y]):
+                                    # If target coordinates in our grid check whether valid target exists or not
+                                    if rank_offset == 0 and grid.units[rel_x][rel_y] != "." and type(unit) != type(grid.units[rel_x][rel_y]):
                                         attackers.append(unit)
                                         unit.skip = False
                                         break
-                                    elif rank_offset != 0:
-                                        # If the target rank is another process request information of unit type
-                                        comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size), dest=rank + rank_offset)
-                                        unit_type = comm.recv(dest=rank + rank_offset)
-                                        if unit_type == type(unit) or unit_type == type("."):
+                                    # If an air unit encounters with a neutral cell it can aim the next cell
+                                    elif rank_offset == 0 and grid.units[rel_x][rel_y] == "." and isinstance(unit, Classes.AirUnit):
+                                        # Range can't exceed 2
+                                        if dir_x == 2 or dir_y == 2 or dir_x == -2 or dir_y == -2 :
                                             continue
+                                        else:
+                                            # Add the next cell into the queue
+                                            relative_coordinates.append([rel_x + dir_x, rel_y + dir_y, 2*dir_x, 2*dir_y])
+
+                                    # If target coordinates are in another grid send signals
+                                    elif rank_offset != 0:
+                                        # request information of unit type
+                                        comm.send((rel_x % sub_grid_size, rel_y % sub_grid_size), dest=rank + rank_offset)
+                                        unit_type = comm.recv(source=rank + rank_offset)
+                                        # If target cell is neutral air units will target next cell
+                                        if unit_type == type(".") and isinstance(unit, Classes.AirUnit):
+                                            if dir_x == 2 or dir_y == 2 or dir_x == -2 or dir_y == -2 :
+                                                continue
+                                            # Add the next cell into the queue
+                                            relative_coordinates.append([rel_x + dir_x, rel_y + dir_y, 2 * dir_x, 2 * dir_y])
+                                        # If target cell is an invalid target continue
+                                        elif unit_type == type(unit) or unit_type == type("."):
+                                            continue
+                                        # If target cell is a valid target we got a new attacker
                                         else:
                                             attackers.append(unit)
                                             unit.skip = False
@@ -379,6 +410,7 @@ else:
                     # Handle data request from another process
                     (x, y) = signal
                     comm.send(type(grid.units[x][y]), status.Get_source())
+            print(rank, attackers, "ATTACK", flush = True)
 
             # RESOLUTION PHASE
 
@@ -390,7 +422,7 @@ else:
                 if signal == "proceed":
                     for attacker in attackers:
                         relative_coordinates = attacker.target_coordinates()
-                        for [rel_x, rel_y] in relative_coordinates:
+                        for [rel_x, rel_y, dir_x, dir_y] in relative_coordinates:
                             rank_offset = get_target_rank_offset(rel_x, rel_y)
                             # If target processor is invalid continue
                             if rank_offset is None:

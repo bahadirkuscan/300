@@ -1,6 +1,6 @@
 class Grid:
     grid_index_limit = 0
-    def __init__(self, size, row, col):
+    def _init_(self, size, row, col):
         self.size = size
         self.row = row
         self.col = col
@@ -42,14 +42,11 @@ class Grid:
     def remove_unit(self, unit):
         self.units[unit.x][unit.y] = "."
         return unit
-
-
-
 class AirUnit:
     attack_pattern = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
     max_health = 10
 
-    def __init__(self, x, y, grid):
+    def _init_(self, x, y, grid):
         self.skip = True
         self.grid = grid
         self.x = x
@@ -58,27 +55,23 @@ class AirUnit:
         self.attack_power = 2  # Base attack power
         self.healing_rate = 2  # Health restored when skipping an attack
 
-        def heal(self):
-            self.health = min(self.health + self.healing_rate, AirUnit.max_health)  # Maximum health is 10
+    def heal(self):
+        self.health = min(self.health + self.healing_rate, AirUnit.max_health)  # Maximum health is 10
 
-        def take_damage(self, damage):
-            self.health -= damage
-            if self.health <= 0:
-                self.health = 0
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            self.health = 0
 
-        def target_coordinates(self):
-            result_queue =[]
-            for [i, j] in AirUnit.attack_pattern:
-                result_queue.append([x+i, y+j])
-            return result_queue
-
-
-
+    def target_coordinates(self):
+        result_queue =[]
+        for [i, j] in AirUnit.attack_pattern:
+            result_queue.append([self.x+i, self.y+j, i, j])
+        return result_queue
 class FireUnit:
     attack_pattern = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
 
-
-    def __init__(self, x, y, grid):
+    def _init_(self, x, y, grid):
         self.skip = True
         self.inferno_applied = False
         self.grid = grid
@@ -89,33 +82,33 @@ class FireUnit:
         self.attack_power = 4  # Base attack power
         self.healing_rate = 1  # Health restored when skipping an attack
 
-        def heal(self):
-            self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 12
+    def heal(self):
+        self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 12
 
-        def take_damage(self, damage):
-            self.health -= damage
-            if self.health <= 0:
-                self.health = 0  # Ensure health does not go below zero
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            self.health = 0  # Ensure health does not go below zero
 
-        def is_alive(self):
-            return self.health > 0
+    def is_alive(self):
+        return self.health > 0
 
-        def inferno(self):
-            if self.inferno_applied or self.skip:
-                return
-            self.attack_power = max(self.attack_power + 1, 6) # max attack power is 6
-            self.inferno_applied = True
+    def inferno(self):
+        if self.inferno_applied or self.skip:
+            return
+        self.attack_power = max(self.attack_power + 1, 6) # max attack power is 6
+        self.inferno_applied = True
 
-        def target_coordinates(self):
-            result_queue =[]
-            for [i, j] in FireUnit.attack_pattern:
-                result_queue.append([x+i, y+j])
-            return result_queue
+    def target_coordinates(self):
+        result_queue =[]
+        for [i, j] in FireUnit.attack_pattern:
+            result_queue.append([self.x+i, self.y+j, i, j])
+        return result_queue
 class EarthUnit:
     attack_pattern = [[-1, 0], [0, -1], [0, 1], [1, 0]]
 
 
-    def __init__(self, x, y, grid):
+    def _init_(self, x, y, grid):
         self.skip = True
         self.grid =grid
         self.x = x
@@ -125,29 +118,27 @@ class EarthUnit:
         self.attack_power = 2  # Base attack power
         self.healing_rate = 3  # Health restored when skipping an attack
 
-        def heal(self):
-            self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 10
+    def heal(self):
+        self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 10
 
-        def take_damage(self, damage):
-            self.health -= damage // 2
-            if self.health <= 0:
-                self.health = 0
+    def take_damage(self, damage):
+        self.health -= damage // 2
+        if self.health <= 0:
+            self.health = 0
 
-        def is_alive(self):
-            return self.health > 0
+    def is_alive(self):
+        return self.health > 0
 
-        def target_coordinates(self):
-            result_queue =[]
-            for [i, j] in EarthUnit.attack_pattern:
-                result_queue.append([x+i, y+j])
-            return result_queue
-
-
+    def target_coordinates(self):
+        result_queue =[]
+        for [i, j] in EarthUnit.attack_pattern:
+            result_queue.append([self.x+i, self.y+j, i, j])
+        return result_queue
 class WaterUnit:
     attack_pattern = [[-1, -1], [-1, 1], [1, -1], [1, 1]]
 
 
-    def __init__(self, x, y, grid):
+    def _init_(self, x, y, grid):
         self.skip = True
         self.grid = grid
         self.x = x
@@ -157,19 +148,19 @@ class WaterUnit:
         self.attack_power = 3  # Base attack power
         self.healing_rate = 2  # Health restored when skipping an attack
 
-        def heal(self):
-            self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 10
+    def heal(self):
+        self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 10
 
-        def take_damage(self, damage):
-            self.health -= damage
-            if self.health <= 0:
-                self.health = 0  # Ensure health does not go below zero
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            self.health = 0  # Ensure health does not go below zero
 
-        def is_alive(self):
-            return self.health > 0
+    def is_alive(self):
+        return self.health > 0
 
-        def target_coordinates(self):
-            result_queue = []
-            for [i, j] in WaterUnit.attack_pattern:
-                result_queue.append([x + i, y + j])
-            return result_queue
+    def target_coordinates(self):
+        result_queue = []
+        for [i, j] in WaterUnit.attack_pattern:
+            result_queue.append([self.x + i, self.y + j, i, j])
+        return result_queue

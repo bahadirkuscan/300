@@ -1,5 +1,7 @@
 # Import the MPI module from the mpi4py library
 import math
+import sys
+
 import Classes
 from mpi4py import MPI
 
@@ -112,8 +114,9 @@ def air_unit_movement(big_grid):
 
 if rank == 0:
     # Initialize
-    file = open("input1.txt", 'r')
-    line = file.readline()
+    input_file = open(sys.argv[1], 'r')
+    output_file = open(sys.argv[2], "w")
+    line = input_file.readline()
     # The size of main grid = N
     main_grid_size, wave_count, unit_count, round_count = map(int, line.split())
 
@@ -128,10 +131,10 @@ if rank == 0:
         comm.recv(source=i)
     for wave_number in range(wave_count):
         # Get the coordinates of each unit and put them in an array
-        line = file.readline()
+        line = input_file.readline()
         lines = []
         for i in range(4):
-            line = file.readline()
+            line = input_file.readline()
             lines.append(line)
         units = parse_units(lines)
 
@@ -257,12 +260,15 @@ if rank == 0:
     # Print the array with one space between elements
     for row in print_array:
         for element in row:
-            print(element, end=" ")
-        print(flush=True)
+            output_file.write(element + " ")
+            #print(element, end=" ")
+        #print(flush=True)
+        output_file.write("\n")
 
 
 
-    file.close()
+    input_file.close()
+    output_file.close()
 
 
 else:

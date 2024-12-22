@@ -14,7 +14,7 @@ n_ranks = comm.Get_size()
 # Get the rank (unique ID) of the current process in the communicator
 rank = comm.Get_rank()
 # Gets absolute coordinates of a cell and returns the rank of its processor and relative coordinates
-def coordinates_of_subgrid(x, y, sub_grid_size):
+def get_relative_coordinates(x, y, sub_grid_size):
     x_relative = x % sub_grid_size
     y_relative = y % sub_grid_size
     row = x // sub_grid_size
@@ -29,7 +29,7 @@ def get_absolute_coordinates(rel_x, rel_y, sub_grid_size, source_rank):
     y_abs = col * sub_grid_size + rel_y
     return x_abs, y_abs
 
-# gets relative rank of a processor given relative addresses
+# Gets relative rank of a processor given relative addresses
 def get_target_rank_offset(new_x, new_y):
     row_diff = new_x // sub_grid_size
     col_diff = new_y // sub_grid_size
@@ -53,56 +53,113 @@ def parse_units(lines):
         positions = line[1].split(",")
         for j in range(unit_count):
             x, y = map(int, positions[j].split())
-            target_rank, x_relative, y_relative = coordinates_of_subgrid(x, y, sub_grid_size)
+            target_rank, x_relative, y_relative = get_relative_coordinates(x, y, sub_grid_size)
             units[target_rank].append((line[0], x_relative, y_relative))
     return units
 
 
-# returns the rank of a processor using its row and col number. Not absolute coordinates
-def get_rank(row, col):
-    return row * Classes.Grid.grid_index_limit + col + 1
+# Returns the rank of a processor using its row and col number
+def get_rank(processor_row, processor_col):
+    return processor_row * Classes.Grid.grid_index_limit + processor_col + 1
 
 
-# Returns number of targets can be shot by an imaginary air unit deployed in a specific coordinate using a big_grid
-def air_unit_target_count(big_grid, row, col):
+
+# Returns the number of targets that can be shot by an imaginary air unit deployed in a specific coordinate
+def air_unit_target_count(row, col):
     target_number = 0
     for [x, y] in Classes.AirUnit.attack_pattern:
-        # There is nothing to shoot outside of grid + we can't shoot our allies
-        if big_grid[row + x][col + y] == "X" or isinstance(big_grid[row + x][col + y], Classes.AirUnit):
+
+        target_x, target_y = row + x, col + y
+        rank_offset = get_target_rank_offset(target_x, target_y)
+        if rank_offset is None:
             continue
-        # If the cell is neutral, look at the next cell.  it should not be neutral, an ally or outside of the main grid
-        elif big_grid[row + x][col + y] == ".":
-            if big_grid[row + 2 * x][col + 2 * y] != "." and \
-                    not isinstance(big_grid[row + 2 * x][col + 2 * y], Classes.AirUnit) and \
-                    not big_grid[row + 2 * x][col + 2 * y] == "X":
+
+        # If the cell under check is in the same sub-grid
+        if rank_offset == 0:
+            target_unit = grid.units[target_x][target_y]
+            # Cannot shoot allies
+            if isinstance(target_unit, Classes.AirUnit):
+                continue
+
+            # Air units can skip over neutral cells, check the next one
+            elif target_unit == ".":
+                target_x, target_y = row + 2 * x, col + 2 * y
+                rank_offset = get_target_rank_offset(target_x, target_y)
+                # Target is not in the grid
+                if rank_offset is None:
+                    continue
+                # If the cell under check is in the same sub-grid
+                if rank_offset == 0:
+                    target_unit = grid.units[target_x][target_y]
+                    if target_unit != "." and not isinstance(target_unit, Classes.AirUnit):
+                        target_number += 1
+                # If the cell under check is in a different sub-grid
+                else:
+                    comm.send(("send unit type", target_x % sub_grid_size, target_y % sub_grid_size), dest=rank+rank_offset)
+                    # Receive unit type of the cell
+                    unit_type = comm.recv(source=rank+rank_offset)
+                    if unit_type is not str and unit_type is not Classes.AirUnit:
+                        target_number += 1
+            else:
                 target_number += 1
+        # If the cell under check is in a different sub-grid
         else:
-            target_number += 1
+            comm.send(("send unit type", target_x % sub_grid_size, target_y % sub_grid_size), dest=rank+rank_offset)
+            unit_type = comm.recv(source=rank+rank_offset)
+            if unit_type is Classes.AirUnit:
+                continue
+            # Check the next one, target certainly will not be in the same sub-grid as the air unit
+            if unit_type is str:
+                target_x, target_y = row + 2 * x, col + 2 * y
+                rank_offset = get_target_rank_offset(target_x, target_y)
+                # Target is not in the grid
+                if rank_offset is None:
+                    continue
+                comm.send(("send unit type", target_x % sub_grid_size, target_y % sub_grid_size),dest=rank + rank_offset)
+                unit_type = comm.recv(source=rank + rank_offset)
+                if unit_type is not str and unit_type is not Classes.AirUnit:
+                    target_number += 1
+            else:
+                target_number += 1
+
     return target_number
 
 
-# Gets a big_grid and for each air unit in the middle section returns a movement_queue
-def air_unit_movement(big_grid):
-    n = len(big_grid) // 3
+# Decides on a movement for every air unit in the sub-grid, returns an array consisting of [x, y, new_x, new_y] arrays where x,y are the old coordinates and new_x,new_y are the new coordinates for an air unit.
+def air_unit_movement():
     result_array = []
     # Only look at the middle region
-    for row_count in range(n, 2 * n):
-        for col_count in range(n, 2 * n):
+    for row in range(sub_grid_size):
+        for col in range(sub_grid_size):
             # For each air unit
-            if isinstance(big_grid[row_count][col_count], Classes.AirUnit):
+            if isinstance(grid.units[row][col], Classes.AirUnit):
                 # Get target number for each possible movement
-                max_targets = air_unit_target_count(big_grid, row_count, col_count)
+                max_targets = air_unit_target_count(row, col)
                 # new x and new y will be represented
-                new_x, new_y = row_count, col_count
+                new_x, new_y = row, col
                 for [x, y] in [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]:
-                    # You can only move to neutral cells and other air units
-                    if big_grid[row_count + x][col_count + y] == ".":
-                        target_number = air_unit_target_count(big_grid, row_count + x, col_count + y)
+                    target_x, target_y = row + x, col + y
+                    rank_offset = get_target_rank_offset(target_x, target_y)
+                    if rank_offset is None:
+                        continue
+                    if rank_offset == 0:
+                        if grid.units[target_x][target_y] == ".":
+                            target_number = air_unit_target_count(target_x, target_y)
+                            if target_number > max_targets:
+                                new_x, new_y = target_x, target_y
+                                max_targets = target_number
+                    else:
+                        comm.send(("send target count", target_x % sub_grid_size, target_y % sub_grid_size), dest=rank+rank_offset)
+                        response = comm.recv(source=rank+rank_offset)
+                        # Neighbour grids will ask for units
+                        while type(response) != int:
+                            comm.send(type(grid.units[response[1]][response[2]]), dest=rank+rank_offset)
+                            response = comm.recv(source=rank+rank_offset)
+                        target_number = response
                         if target_number > max_targets:
+                            new_x, new_y = target_x, target_y
                             max_targets = target_number
-                            # New x and new y are the coordinates in big_grid
-                            new_x, new_y = row_count + x, col_count + y
-                result_array.append([row_count - n, col_count - n, new_x - n, new_y - n])
+                result_array.append([row, col, new_x, new_y])
     return result_array
 
 
@@ -151,9 +208,9 @@ if rank == 0:
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
                 signal_count = 0
-                for row in range(a, Classes.Grid.grid_index_limit, 2):
-                    for col in range(b, Classes.Grid.grid_index_limit, 2):
-                        comm.send("proceed", get_rank(row, col))
+                for processor_row in range(a, Classes.Grid.grid_index_limit, 2):
+                    for processor_col in range(b, Classes.Grid.grid_index_limit, 2):
+                        comm.send("proceed", get_rank(processor_row, processor_col))
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -181,9 +238,9 @@ if rank == 0:
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
                 signal_count = 0
-                for row in range(a, Classes.Grid.grid_index_limit, 2):
-                    for col in range(b, Classes.Grid.grid_index_limit, 2):
-                        comm.send("proceed", get_rank(row, col))
+                for processor_row in range(a, Classes.Grid.grid_index_limit, 2):
+                    for processor_col in range(b, Classes.Grid.grid_index_limit, 2):
+                        comm.send("proceed", get_rank(processor_row, processor_col))
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -198,9 +255,9 @@ if rank == 0:
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
                 signal_count = 0
-                for row in range(a, Classes.Grid.grid_index_limit, 2):
-                    for col in range(b, Classes.Grid.grid_index_limit, 2):
-                        comm.send("proceed", get_rank(row, col))
+                for processor_row in range(a, Classes.Grid.grid_index_limit, 2):
+                    for processor_col in range(b, Classes.Grid.grid_index_limit, 2):
+                        comm.send("proceed", get_rank(processor_row, processor_col))
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -212,9 +269,9 @@ if rank == 0:
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
                 signal_count = 0
-                for row in range(a, Classes.Grid.grid_index_limit, 2):
-                    for col in range(b, Classes.Grid.grid_index_limit, 2):
-                        comm.send("proceed", get_rank(row, col))
+                for processor_row in range(a, Classes.Grid.grid_index_limit, 2):
+                    for processor_col in range(b, Classes.Grid.grid_index_limit, 2):
+                        comm.send("proceed", get_rank(processor_row, processor_col))
                         signal_count += 1
                 for _ in range(signal_count):
                     comm.recv()
@@ -229,9 +286,9 @@ if rank == 0:
         # Start with even-even coords and end with odd-odd coords
         for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
             signal_count = 0
-            for row in range(a, Classes.Grid.grid_index_limit, 2):
-                for col in range(b, Classes.Grid.grid_index_limit, 2):
-                    comm.send("proceed", get_rank(row, col))
+            for processor_row in range(a, Classes.Grid.grid_index_limit, 2):
+                for processor_col in range(b, Classes.Grid.grid_index_limit, 2):
+                    comm.send("proceed", get_rank(processor_row, processor_col))
                     signal_count += 1
             for _ in range(signal_count):
                 comm.recv()
@@ -243,8 +300,8 @@ if rank == 0:
         status = MPI.Status()
         sub_grid = comm.recv(status=status)
         source_rank = status.Get_source()
-        for row in sub_grid.units:
-            for unit in row:
+        for r in sub_grid.units:
+            for unit in r:
                 if unit == ".":
                     continue
                 x, y = get_absolute_coordinates(unit.x, unit.y, sub_grid_size, source_rank)
@@ -258,8 +315,8 @@ if rank == 0:
                     print_array[x][y] = "E"
 
     # Print the array with one space between elements
-    for row in print_array:
-        for element in row:
+    for r in print_array:
+        for element in r:
             output_file.write(element + " ")
             #print(element, end=" ")
         #print(flush=True)
@@ -275,8 +332,8 @@ else:
     # Wait for the manager to calculate sub-grid size
     main_grid_size, sub_grid_size, wave_count, round_count = comm.recv(source=0)
     Classes.Grid.grid_index_limit = main_grid_size // sub_grid_size
-    row, col = (rank-1) // Classes.Grid.grid_index_limit, (rank+1) % Classes.Grid.grid_index_limit
-    grid = Classes.Grid(sub_grid_size, row, col)
+    processor_row, processor_col = (rank-1) // Classes.Grid.grid_index_limit, (rank+1) % Classes.Grid.grid_index_limit
+    grid = Classes.Grid(sub_grid_size, processor_row, processor_col)
     comm.send(grid, dest=0)
     for wave_number in range(wave_count):
         units = comm.recv(source=0)
@@ -296,33 +353,18 @@ else:
                         # If we don't have an air unit we are done in movement phase
                         comm.send("completed", dest=0)
                     else:
-                        # If we do then get your neighbours' data to build a bigger grid
-                        big_grid = [["X" for _ in range(3 * sub_grid_size)] for _ in range(3 * sub_grid_size)]
-                        # First put your own grid inside it
-                        for i in range(sub_grid_size):
-                            for j in range(sub_grid_size):
-                                big_grid[sub_grid_size + i][sub_grid_size + j] = grid.units[i][j]
-
-                        # Then go to neighbours and put their data inside of it
-                        for x, y in [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]:
-                            # Invalid cells will remain as "X"
-                            if 0 <= row + x < Classes.Grid.grid_index_limit and 0 <= col + y < Classes.Grid.grid_index_limit:
-                                comm.send("send data", dest=get_rank(row + x, col + y))
-                                new_grid = comm.recv(source=get_rank(row + x, col + y))
-                                # Now put the new grid inside big grid
-                                for i in range(sub_grid_size):
-                                    for j in range(sub_grid_size):
-                                        big_grid[(x + 1) * sub_grid_size + i][(y + 1) * sub_grid_size + j] = new_grid.units[i][j]
-
-                        movement_queue = air_unit_movement(big_grid)
+                        movement_queue = air_unit_movement()
                         comm.send("completed", dest=0)
-
-                elif signal == "send data":
-                    comm.send(grid, dest=status.Get_source())
 
                 elif signal == "finish":
                     break
 
+                elif signal[0] == "send unit type":
+                    comm.send(type(grid.units[signal[1]][signal[2]]), status.Get_source())
+
+                elif signal[0] == "send target count":
+                    target_count = air_unit_target_count(signal[1], signal[2])
+                    comm.send(target_count, status.Get_source())
 
             # Applying movements of movement phase
             # First, handle your own queue and send necessary signals to other workers

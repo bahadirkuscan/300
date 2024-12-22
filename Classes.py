@@ -1,6 +1,6 @@
 class Grid:
     grid_index_limit = 0
-    def _init_(self, size, row, col):
+    def __init__(self, size, row, col):
         self.size = size
         self.row = row
         self.col = col
@@ -46,7 +46,7 @@ class AirUnit:
     attack_pattern = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
     max_health = 10
 
-    def _init_(self, x, y, grid):
+    def __init__(self, x, y, grid):
         self.skip = True
         self.grid = grid
         self.x = x
@@ -74,7 +74,7 @@ class AirUnit:
 class FireUnit:
     attack_pattern = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
 
-    def _init_(self, x, y, grid):
+    def __init__(self, x, y, grid):
         self.skip = True
         self.inferno_applied = False
         self.grid = grid
@@ -89,7 +89,6 @@ class FireUnit:
         self.health = min(self.health + self.healing_rate, self.max_health)  # Maximum health is 12
 
     def take_damage(self, damage):
-        print(self.x, self.y,damage, flush=True)
         self.health -= damage
         if self.health <= 0:
             self.health = 0  # Ensure health does not go below zero
@@ -112,7 +111,7 @@ class EarthUnit:
     attack_pattern = [[-1, 0], [0, -1], [0, 1], [1, 0]]
 
 
-    def _init_(self, x, y, grid):
+    def __init__(self, x, y, grid):
         self.skip = True
         self.grid =grid
         self.x = x
@@ -140,7 +139,7 @@ class EarthUnit:
         return result_queue
 class WaterUnit:
     attack_pattern = [[-1, -1], [-1, 1], [1, -1], [1, 1]]
-    def _init_(self, x, y, grid):
+    def __init__(self, x, y, grid):
         self.skip = True
         self.grid = grid
         self.x = x

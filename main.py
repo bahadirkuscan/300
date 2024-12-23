@@ -265,6 +265,9 @@ if rank == 0:
             for i in range(1, n_ranks):
                 comm.send("phase finished", i)
 
+            for i in range(1,n_ranks):
+                comm.recv(source= i)
+
             # HEALING PHASE
             # Start with even-even coords and end with odd-odd coords
             for a, b in [(0, 0), (0, 1), (1, 0), (1, 1)]:
@@ -528,7 +531,7 @@ else:
                     else:
                         grid.units[x][y].take_damage(damage)
 
-
+            comm.send("In healing phase", dest=0)
 
             # HEALING PHASE
             # Bury the dead ones, heal the alive skippers

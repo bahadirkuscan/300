@@ -6,6 +6,7 @@ class Grid:
         self.col = col
         self.units = [["." for _ in range(size)] for _ in range(size)]
 
+    # Gets a tuple for a unit containing its faction and coordinates, creates the unit if possible
     def create_unit(self, unit):
         faction, x, y = unit
         if self.units[x][y] == ".":
@@ -29,6 +30,7 @@ class Grid:
                     return True
         return False
 
+    # Gets a unit object and coordinates, adds it to the coordinates if possible while also handling air unit merges
     def add_unit(self, unit, x, y):
         occupier = self.units[x][y]
         if occupier == ".":
@@ -39,6 +41,7 @@ class Grid:
             occupier.health = min(occupier.health + unit.health, AirUnit.max_health)
             occupier.attack_power += unit.attack_power
 
+    # Removes and returns the given unit object
     def remove_unit(self, unit):
         self.units[unit.x][unit.y] = "."
         return unit
